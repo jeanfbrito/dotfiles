@@ -40,3 +40,20 @@ cd ~/dotfiles
 7. Ghostty config is only linked on macOS
 
 The script is idempotent — safe to run multiple times. It skips anything already installed.
+
+## Updating
+
+Config changes are picked up automatically since files are symlinked:
+
+```bash
+cd ~/dotfiles
+git pull
+```
+
+If new packages were added to the repo, run the install script again:
+
+```bash
+cd ~/dotfiles
+git pull
+./install.sh
+```
