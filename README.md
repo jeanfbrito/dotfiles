@@ -18,16 +18,4 @@ cd ~/dotfiles
 ./install.sh
 ```
 
-The install script uses GNU Stow if available, otherwise falls back to manual symlinks.
-
-## Dependencies
-
-```bash
-# macOS
-brew install stow fzf
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
-git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-git clone https://github.com/zsh-users/zsh-syntax-highlighting ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-git clone https://github.com/zsh-users/zsh-completions ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-completions
-```
+The install script automatically installs all dependencies (zsh, stow, fzf, Oh My Zsh, Powerlevel10k, plugins) and creates the symlinks. Works on macOS (Homebrew) and Ubuntu/Debian (apt). Ghostty config is only linked on macOS.
