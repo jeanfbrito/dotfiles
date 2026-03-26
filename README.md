@@ -38,6 +38,7 @@ cd ~/dotfiles
 5. Creates symlinks via GNU Stow (falls back to `ln -sf` if stow is unavailable)
 6. Sets zsh as your default shell
 7. Ghostty config is only linked on macOS
+8. Installs bundled `xterm-ghostty` terminfo when missing (useful on SSH servers)
 
 The script is idempotent — safe to run multiple times. It skips anything already installed.
 

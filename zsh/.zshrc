@@ -1,6 +1,12 @@
 # Add deno completions to search path
 if [[ ":$FPATH:" != *":$HOME/completions:"* ]]; then export FPATH="$HOME/completions:$FPATH"; fi
 
+# Ghostty uses TERM=xterm-ghostty, but many servers don't ship that terminfo.
+# When connecting over SSH, fall back to a widely available entry to avoid zle/prompt redraw glitches.
+if [[ -n "$SSH_CONNECTION" ]] && [[ "$TERM" == "xterm-ghostty" ]] && ! infocmp xterm-ghostty >/dev/null 2>&1; then
+  export TERM="xterm-256color"
+fi
+
 # Agent detection - only activate minimal mode for actual agents  
 if [[ -n "$npm_config_yes" ]] || [[ -n "$CI" ]] || [[ "$-" != *i* ]]; then
   export AGENT_MODE=true

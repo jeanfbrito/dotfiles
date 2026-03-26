@@ -3,6 +3,28 @@ set -e
 
 DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+install_ghostty_terminfo() {
+  local source_file="$DOTFILES_DIR/terminfo/xterm-ghostty.src"
+
+  if [ ! -f "$source_file" ]; then
+    return
+  fi
+
+  if command -v infocmp &>/dev/null && infocmp xterm-ghostty &>/dev/null; then
+    echo "Ghostty terminfo already available"
+    return
+  fi
+
+  if ! command -v tic &>/dev/null; then
+    echo "Skipping Ghostty terminfo install: 'tic' not found"
+    return
+  fi
+
+  echo "Installing Ghostty terminfo..."
+  mkdir -p "$HOME/.terminfo"
+  tic -x -o "$HOME/.terminfo" "$source_file"
+}
+
 # Detect package manager
 if command -v brew &>/dev/null; then
   PKG="brew"
@@ -36,6 +58,11 @@ install_pkg git
 install_pkg zsh
 install_pkg stow
 install_pkg fzf
+
+if [ "$PKG" = "apt" ] && ! command -v tic &>/dev/null; then
+  echo "Installing ncurses-bin..."
+  sudo apt-get install -y ncurses-bin
+fi
 
 # Oh My Zsh
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
@@ -86,6 +113,8 @@ else
     ln -sf "$DOTFILES_DIR/ghostty/.config/ghostty/config" "$HOME/.config/ghostty/config"
   fi
 fi
+
+install_ghostty_terminfo
 
 # Set zsh as default shell if it isn't already
 if [ "$(basename "$SHELL")" != "zsh" ]; then
