@@ -13,6 +13,12 @@ else
   exit 1
 fi
 
+# Update package index on apt-based systems
+if [ "$PKG" = "apt" ]; then
+  echo "Updating package index..."
+  sudo apt-get update -y
+fi
+
 install_pkg() {
   if command -v "$1" &>/dev/null; then return; fi
   echo "Installing $1..."
@@ -25,9 +31,9 @@ install_pkg() {
 
 # --- Dependencies ---
 
-# zsh
-install_pkg zsh
+install_pkg curl
 install_pkg git
+install_pkg zsh
 install_pkg stow
 install_pkg fzf
 
