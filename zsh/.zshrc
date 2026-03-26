@@ -73,9 +73,13 @@ FPATH=~/.rbenv/completions:"$FPATH"
 export PATH="$HOME/.rbenv/bin:$PATH"
 autoload -U compinit
 compinit
-eval "$(rbenv init - --no-rehash zsh)"
+if command -v rbenv >/dev/null 2>&1; then
+  eval "$(rbenv init - --no-rehash zsh)"
+fi
 
-eval "$(direnv hook zsh)"
+if command -v direnv >/dev/null 2>&1; then
+  eval "$(direnv hook zsh)"
+fi
 
 # Android
 export ANDROID_HOME="$HOME/Library/Android/sdk"
