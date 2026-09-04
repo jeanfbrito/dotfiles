@@ -9,6 +9,7 @@ My terminal setup: zsh, Powerlevel10k, Ghostty — managed with [GNU Stow](https
 | `zsh` | `.zshrc` — Oh My Zsh, fzf, autosuggestions, syntax-highlighting |
 | `p10k` | `.p10k.zsh` — Powerlevel10k rainbow prompt, transient prompt, node_version |
 | `ghostty` | `.config/ghostty/config` — colors, Hack Nerd Font Mono 13 (macOS only) |
+| `claude` | `.claude/statusline-command.sh` — Claude Code status line styled like the p10k prompt, with git and PR status |
 
 ## Quick start
 
@@ -41,6 +42,44 @@ cd ~/dotfiles
 8. Installs bundled `xterm-ghostty` terminfo when missing (useful on SSH servers)
 
 The script is idempotent — safe to run multiple times. It skips anything already installed.
+
+## Claude Code status line
+
+`claude/.claude/statusline-command.sh` renders the Claude Code status line with
+the same palette and glyphs as the p10k prompt: directory and git branch on the
+left, model and context usage on the right. It needs `jq` (installed by the
+script) and a Nerd Font in the terminal.
+
+The install script links only that one file into `~/.claude/` (`--no-folding`),
+because the rest of `~/.claude` is per-machine state that must stay out of git.
+Claude Code still has to be told to use it, once per machine, in
+`~/.claude/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "bash ~/.claude/statusline-command.sh" }
+```
+
+### PR segment
+
+When `gh` is installed and authenticated, a segment after the git branch shows
+the pull request being worked on: `#3485 ✓8 …1` (checks passed, `✗` failed,
+`…` pending; `✔` approved, `✎` changes requested). Green when all checks pass,
+yellow while any run, red on a failure, grey with a `draft` prefix for drafts.
+
+Which PR it shows, in order:
+
+1. `~/.cache/claude-statusline/session-<session_id>.pr` or
+   `~/.cache/claude-statusline/current.pr`, each a single line
+   `owner/repo#number`. Pins the segment to a PR regardless of the current
+   directory, useful when the work lives in a git worktree. Delete the file to
+   unpin.
+2. Otherwise the open PR for the current directory's branch.
+
+The render never calls GitHub directly. It reads a cache under
+`~/.cache/claude-statusline/` and refreshes it in a detached background job
+when it is older than `CLAUDE_STATUSLINE_PR_TTL` seconds (default 60).
+`CLAUDE_STATUSLINE_PR=0` disables the segment. Without `gh` the segment is
+simply omitted.
 
 ## Updating
 

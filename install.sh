@@ -58,6 +58,7 @@ install_pkg git
 install_pkg zsh
 install_pkg stow
 install_pkg fzf
+install_pkg jq   # Claude Code status line parses its JSON payload with jq
 
 if [ "$PKG" = "apt" ] && ! command -v tic &>/dev/null; then
   echo "Installing ncurses-bin..."
@@ -98,16 +99,25 @@ if [ "$(uname)" = "Darwin" ]; then
   PACKAGES+=(ghostty)
 fi
 
+# Claude Code status line. ~/.claude also holds settings, plugins, and session
+# data that must NOT end up in this repo, so the directory is created first and
+# the package is stowed with --no-folding: only the one file gets linked, never
+# the directory itself.
+mkdir -p "$HOME/.claude"
+
 if command -v stow &>/dev/null; then
   for pkg in "${PACKAGES[@]}"; do
     echo "  Stowing $pkg"
     stow -d "$DOTFILES_DIR" -t "$HOME" --adopt "$pkg"
   done
+  echo "  Stowing claude (no-folding)"
+  stow -d "$DOTFILES_DIR" -t "$HOME" --adopt --no-folding claude
   # Restore our versions after --adopt
   git -C "$DOTFILES_DIR" checkout .
 else
   ln -sf "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
   ln -sf "$DOTFILES_DIR/p10k/.p10k.zsh" "$HOME/.p10k.zsh"
+  ln -sf "$DOTFILES_DIR/claude/.claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
   if [ "$(uname)" = "Darwin" ]; then
     mkdir -p "$HOME/.config/ghostty"
     ln -sf "$DOTFILES_DIR/ghostty/.config/ghostty/config" "$HOME/.config/ghostty/config"
