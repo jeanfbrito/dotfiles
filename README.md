@@ -77,9 +77,22 @@ Which PR it shows, in order:
 
 The render never calls GitHub directly. It reads a cache under
 `~/.cache/claude-statusline/` and refreshes it in a detached background job
-when it is older than `CLAUDE_STATUSLINE_PR_TTL` seconds (default 60).
-`CLAUDE_STATUSLINE_PR=0` disables the segment. Without `gh` the segment is
-simply omitted.
+(one `gh pr view` per PR per interval) when the cache is older than:
+
+- `CLAUDE_STATUSLINE_PR_TTL` (default 60 s) while checks are still running,
+  or while a pushed branch has no PR yet;
+- `CLAUDE_STATUSLINE_PR_TTL_SETTLED` (default 600 s) once every check has
+  finished.
+
+A branch with no `origin/<branch>` counterpart cannot have a PR, so nothing
+is polled for it at all.
+
+Two events bypass the interval: a new commit on the current branch (the
+branch head is part of the cache key), and a hint file newer than the cache
+(rewriting or `touch`ing `current.pr` forces a refresh). Cache files older
+than seven days are pruned during refreshes. `CLAUDE_STATUSLINE_PR=0`
+disables the segment. Without `gh`, or without `gh auth login`, the segment
+is simply omitted.
 
 ## Updating
 

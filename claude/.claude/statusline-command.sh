@@ -117,10 +117,42 @@ fi
 # ---- left: PR status, right after the git block. This talks to GitHub
 # (`gh pr view`), which is a network call — never allowed to block a status line
 # that renders on every keystroke. So the render path here ONLY reads a cache
-# file; it never calls `gh` itself. If the cache is missing or older than the
-# TTL, a background refresh is kicked off (detached, lock-guarded so concurrent
+# file; it never calls `gh` itself. If the cache is missing or stale, a
+# background refresh is kicked off (detached, lock-guarded so concurrent
 # renders don't pile up `gh` calls) and this render still completes immediately
 # with whatever is already cached (or nothing).
+#
+# Refresh cadence is adaptive, not a flat interval: an ACTIVE PR (cached
+# pending > 0 — checks still running) refreshes every CLAUDE_STATUSLINE_PR_TTL
+# seconds (default 60); a SETTLED PR (no pending checks — all passed or some
+# failed) backs off to CLAUDE_STATUSLINE_PR_TTL_SETTLED seconds (default 600),
+# since polling a PR that isn't moving just burns `gh` calls. A cache of
+# {"none":true} (no PR for this branch) also uses the settled TTL in hint
+# mode, but in cwd-branch mode it uses the ACTIVE TTL instead WHEN the branch
+# is confirmed pushed to origin (see below) — a PR could be opened on it any
+# moment and should show up within a minute, not ten. This means the cache
+# has to be read and its state derived BEFORE deciding whether it's due for a
+# refresh — done with a tiny jq pass that only extracts pending-count/none,
+# ahead of the full render pass below.
+#
+# cwd-branch mode also skips GitHub entirely when the current branch has no
+# refs/remotes/origin/<branch> — a PR cannot exist for a branch that was never
+# pushed, so there is nothing to poll: no segment, no refresh, no cache write.
+# This check rides the SAME git call used for the toplevel and HEAD (see
+# below), so it costs no extra process.
+#
+# Two invalidation paths bypass the TTL entirely so a local change is picked up
+# immediately rather than waiting out the backoff:
+#   - cwd-branch mode: the cache key folds in HEAD's short sha (from the SAME
+#     git call already needed for the toplevel and the remote-branch check —
+#     no extra git spawn) — a new commit is a new key, which is simply not in
+#     the cache yet, forcing an immediate refresh.
+#   - hint mode: if the hint file's mtime is newer than the cache file's mtime,
+#     the cache is treated as stale regardless of TTL — so `touch`ing or
+#     rewriting current.pr (e.g. tooling that pins a PR when it starts
+#     watching) forces a refresh on the very next render.
+# Net cost stays bounded: at most one `gh pr view` per distinct PR key per
+# refresh interval, never per render.
 #
 # The cwd is usually the MAIN checkout, but the PR being worked tends to live in
 # a worktree on another branch — keying purely on cwd's branch would show
@@ -132,17 +164,21 @@ fi
 # hint file exists, the segment falls back to inferring number/repo from the
 # cwd's current branch instead.
 if [ "${CLAUDE_STATUSLINE_PR:-1}" != "0" ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  pr_ttl=${CLAUDE_STATUSLINE_PR_TTL:-60}
+  pr_ttl_active=${CLAUDE_STATUSLINE_PR_TTL:-60}
+  pr_ttl_settled=${CLAUDE_STATUSLINE_PR_TTL_SETTLED:-600}
   pr_cache_dir="$HOME/.cache/claude-statusline"
   mkdir -p "$pr_cache_dir" 2>/dev/null
 
   pr_hint=""
+  pr_hint_file=""
   session_id=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
   if [ -n "$session_id" ] && [ -f "${pr_cache_dir}/session-${session_id}.pr" ]; then
     pr_hint=$(cat "${pr_cache_dir}/session-${session_id}.pr" 2>/dev/null)
+    pr_hint_file="${pr_cache_dir}/session-${session_id}.pr"
   fi
   if [ -z "$pr_hint" ] && [ -f "${pr_cache_dir}/current.pr" ]; then
     pr_hint=$(cat "${pr_cache_dir}/current.pr" 2>/dev/null)
+    pr_hint_file="${pr_cache_dir}/current.pr"
   fi
   # Trim surrounding whitespace, then validate the "owner/repo#number" shape.
   pr_hint=$(printf '%s' "$pr_hint" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
@@ -154,17 +190,47 @@ if [ "${CLAUDE_STATUSLINE_PR:-1}" != "0" ] && command -v gh >/dev/null 2>&1 && c
       ;;
     *) pr_hint="" ;;
   esac
+  [ -z "$pr_hint" ] && pr_hint_file=""
 
   pr_key=""
   pr_view_args=""
+  pr_ttl_none="$pr_ttl_settled"
   if [ -n "$pr_hint" ]; then
     pr_key="$pr_hint"
     pr_view_args="$pr_number -R $pr_owner_repo"
-  elif [ -n "$cwd" ] && [ -d "$cwd" ] && command -v git >/dev/null 2>&1; then
-    pr_root=$(git --no-optional-locks -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
-    if [ -n "$pr_root" ] && [ -n "$pr_branch" ]; then
-      pr_key="${pr_root}|${pr_branch}"
-    fi
+  elif [ -n "$cwd" ] && [ -d "$cwd" ] && [ -n "$pr_branch" ] && command -v git >/dev/null 2>&1; then
+    # One call for three things: a PR can only exist if the branch is pushed,
+    # so resolve the toplevel, HEAD, and the remote-tracking ref together.
+    # `rev-parse` prints resolvable args in order and keeps going after a
+    # missing one (it does NOT abort early) — so 3 lines with a real 40-char
+    # hex sha on line 3 means the remote branch exists; anything else (fewer
+    # lines, or line 3 echoing the literal unresolved ref text) means it does
+    # not, and GitHub is skipped entirely: no segment, no refresh, no cache
+    # write. This costs the SAME single git spawn as before — `--short` was
+    # dropped because on this git version (2.50.1) combining `--short` with a
+    # 3rd revision argument makes rev-parse fail the whole command ("Needed a
+    # single revision") instead of resolving each independently; the short
+    # HEAD used for the cache key is instead taken as a 9-char bash substring
+    # of the full sha, which is what `--short` would have produced anyway.
+    pr_rev_out=$(git --no-optional-locks -C "$cwd" rev-parse --show-toplevel HEAD "refs/remotes/origin/${pr_branch}^{commit}" 2>/dev/null)
+    pr_root=$(printf '%s\n' "$pr_rev_out" | sed -n '1p')
+    pr_head_full=$(printf '%s\n' "$pr_rev_out" | sed -n '2p')
+    pr_remote_sha=$(printf '%s\n' "$pr_rev_out" | sed -n '3p')
+    pr_head="${pr_head_full%${pr_head_full#?????????}}"
+    case "$pr_remote_sha" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+        if [ -n "$pr_root" ] && [ -n "$pr_head" ]; then
+          pr_key="${pr_root}|${pr_branch}|${pr_head}"
+          # A freshly pushed branch may not have a PR opened yet — poll it at
+          # the ACTIVE cadence (not settled) so a new PR shows up within a
+          # minute instead of up to 10.
+          pr_ttl_none="$pr_ttl_active"
+        fi
+        ;;
+      *)
+        # No remote-tracking branch: a PR cannot exist for it. Skip GitHub.
+        ;;
+    esac
   fi
 
   if [ -n "$pr_key" ]; then
@@ -178,13 +244,47 @@ if [ "${CLAUDE_STATUSLINE_PR:-1}" != "0" ] && command -v gh >/dev/null 2>&1 && c
       pr_lock="${pr_cache}.lock"
 
       pr_age=999999
+      pr_mtime=""
       if [ -f "$pr_cache" ]; then
         pr_mtime=$(stat -f %m "$pr_cache" 2>/dev/null || stat -c %Y "$pr_cache" 2>/dev/null)
         now=$(date +%s)
         [ -n "$pr_mtime" ] && pr_age=$((now - pr_mtime))
       fi
 
-      if [ ! -f "$pr_cache" ] || [ "$pr_age" -ge "$pr_ttl" ]; then
+      # Derive the TTL to apply from the cached state itself (pending count /
+      # none flag) BEFORE deciding whether a refresh is due. A cache of
+      # {"none":true} uses pr_ttl_none — the settled TTL in hint mode (a
+      # missing/closed PR isn't about to reappear), but the ACTIVE TTL in
+      # cwd-branch mode when the branch IS on the remote (a PR could be opened
+      # any moment and should show up within a minute, not ten).
+      pr_ttl="$pr_ttl_settled"
+      if [ -f "$pr_cache" ]; then
+        pr_precheck=$(jq -r '
+          if .none then "none"
+          else
+            ((.statusCheckRollup // []) | map((.conclusion|select(.!="")) // .state // .status // "PENDING")) as $states |
+            ($states | map(select(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED" or . == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE") | not)) | length | if . > 0 then "active" else "settled" end
+          end
+        ' "$pr_cache" 2>/dev/null)
+        case "$pr_precheck" in
+          active) pr_ttl="$pr_ttl_active" ;;
+          none) pr_ttl="$pr_ttl_none" ;;
+        esac
+      fi
+
+      pr_stale=0
+      [ ! -f "$pr_cache" ] && pr_stale=1
+      [ -f "$pr_cache" ] && [ "$pr_age" -ge "$pr_ttl" ] && pr_stale=1
+      # Hint mode: a hint file touched/rewritten after the cache was written
+      # forces a refresh regardless of TTL.
+      if [ -n "$pr_hint_file" ] && [ -f "$pr_hint_file" ] && [ -f "$pr_cache" ] && [ -n "$pr_mtime" ]; then
+        hint_mtime=$(stat -f %m "$pr_hint_file" 2>/dev/null || stat -c %Y "$pr_hint_file" 2>/dev/null)
+        if [ -n "$hint_mtime" ] && [ "$hint_mtime" -gt "$pr_mtime" ]; then
+          pr_stale=1
+        fi
+      fi
+
+      if [ "$pr_stale" -eq 1 ]; then
         # Stale lock (>120s) means a previous refresh died without cleaning up;
         # treat it as gone rather than blocking refreshes forever.
         lock_stale=1
@@ -209,6 +309,9 @@ if [ "${CLAUDE_STATUSLINE_PR:-1}" != "0" ] && command -v gh >/dev/null 2>&1 && c
               else
                 printf '{"none":true}' > "$pr_tmp" 2>/dev/null && mv "$pr_tmp" "$pr_cache" 2>/dev/null
               fi
+              # Housekeeping: per-commit cache keys (2a) would otherwise
+              # accumulate forever — sweep anything untouched for 7+ days.
+              find "$pr_cache_dir" -name 'pr-*.json' -mtime +7 -delete 2>/dev/null
               rmdir "$pr_lock" 2>/dev/null
             fi
           ) >/dev/null 2>&1 &
