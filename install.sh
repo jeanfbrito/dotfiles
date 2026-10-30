@@ -2,6 +2,17 @@
 set -e
 
 DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
+LINK_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --link-only) LINK_ONLY=1 ;;
+    --help|-h)
+      printf 'Usage: install.sh [--link-only]\n'
+      printf '  --link-only  Link files without package installation or a shell change.\n'
+      exit 0 ;;
+    *) printf 'Unknown option: %s\n' "$arg" >&2; exit 1 ;;
+  esac
+done
 
 install_ghostty_terminfo() {
   local source_file="$DOTFILES_DIR/terminfo/xterm-ghostty.src"
@@ -25,6 +36,7 @@ install_ghostty_terminfo() {
   tic -x -o "$HOME/.terminfo" "$source_file"
 }
 
+if [ "$LINK_ONLY" -eq 0 ]; then
 # Detect package manager
 if command -v brew &>/dev/null; then
   PKG="brew"
@@ -87,11 +99,33 @@ for plugin in zsh-autosuggestions zsh-syntax-highlighting zsh-completions; do
   fi
 done
 
+fi
+
 # --- Symlinks ---
 
 echo "Linking dotfiles..."
 
-# Only stow packages that make sense for this OS
+# Never adopt files into the repository or reset a working tree.
+# Keep existing files in a private backup before linking individual files.
+BACKUP_DIR=""
+link_file() {
+  local src="$1" dst="$2" relative="$3"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    return
+  fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if [ -z "$BACKUP_DIR" ]; then
+      mkdir -p "$HOME/.local/state/dotfiles"
+      BACKUP_DIR=$(mktemp -d "$HOME/.local/state/dotfiles/backup.XXXXXX")
+      chmod 700 "$BACKUP_DIR"
+    fi
+    mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
+    mv "$dst" "$BACKUP_DIR/$relative"
+  fi
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+}
+
 PACKAGES=(zsh p10k)
 
 # Ghostty only on macOS (desktop terminal)
@@ -99,35 +133,22 @@ if [ "$(uname)" = "Darwin" ]; then
   PACKAGES+=(ghostty)
 fi
 
-# Claude Code status line. ~/.claude also holds settings, plugins, and session
-# data that must NOT end up in this repo, so the directory is created first and
-# the package is stowed with --no-folding: only the one file gets linked, never
-# the directory itself.
-mkdir -p "$HOME/.claude"
-
-if command -v stow &>/dev/null; then
-  for pkg in "${PACKAGES[@]}"; do
-    echo "  Stowing $pkg"
-    stow -d "$DOTFILES_DIR" -t "$HOME" --adopt "$pkg"
-  done
-  echo "  Stowing claude (no-folding)"
-  stow -d "$DOTFILES_DIR" -t "$HOME" --adopt --no-folding claude
-  # Restore our versions after --adopt
-  git -C "$DOTFILES_DIR" checkout .
-else
-  ln -sf "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
-  ln -sf "$DOTFILES_DIR/p10k/.p10k.zsh" "$HOME/.p10k.zsh"
-  ln -sf "$DOTFILES_DIR/claude/.claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
-  if [ "$(uname)" = "Darwin" ]; then
-    mkdir -p "$HOME/.config/ghostty"
-    ln -sf "$DOTFILES_DIR/ghostty/.config/ghostty/config" "$HOME/.config/ghostty/config"
-  fi
+# Link files only. Claude settings, credentials, and history stay outside Git.
+PACKAGES+=(claude)
+for pkg in "${PACKAGES[@]}"; do
+  while IFS= read -r -d '' src; do
+    relative="${src#"$DOTFILES_DIR/$pkg/"}"
+    link_file "$src" "$HOME/$relative" "$relative"
+  done < <(find "$DOTFILES_DIR/$pkg" -type f ! -name '._*' ! -name '.DS_Store' -print0)
+done
+if [ -n "$BACKUP_DIR" ]; then
+  echo "Existing files saved in: $BACKUP_DIR"
 fi
 
 install_ghostty_terminfo
 
 # Set zsh as default shell if it isn't already
-if [ "$(basename "$SHELL")" != "zsh" ]; then
+if [ "$LINK_ONLY" -eq 0 ] && [ "$(basename "$SHELL")" != "zsh" ]; then
   echo "Setting zsh as default shell..."
   chsh -s "$(which zsh)"
 fi

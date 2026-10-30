@@ -37,3 +37,10 @@ font-thicken = true
 
 # Bold
 bold-is-bright = true
+
+# Shell
+shell-integration = detect
+shell-integration-features = no-cursor
+term = xterm-ghostty
+
+cursor-style-blink = false
