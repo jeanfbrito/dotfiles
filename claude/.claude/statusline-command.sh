@@ -30,9 +30,9 @@ input=$(cat)
 
 # ---- F: one jq pass for the whole payload instead of four separate ones
 # (cwd, model, used_percentage, session_id each used to spawn their own `jq`).
-# @tsv + a plain `read` keeps this free of raw control bytes in the source.
-pr_payload_tsv=$(printf '%s' "$input" | jq -r '[.workspace.current_dir // .cwd // "", .model.display_name // .model.id // "", (.context_window.used_percentage // "" | tostring), .session_id // ""] | @tsv' 2>/dev/null)
-IFS=$'\t' read -r cwd model used session_id <<EOF
+# A non-whitespace separator preserves empty fields with Bash read.
+pr_payload_tsv=$(printf '%s' "$input" | jq -r '[.workspace.current_dir // .cwd // "", .model.display_name // .model.id // "", (.context_window.used_percentage // "" | tostring), .session_id // ""] | @tsv' 2>/dev/null | tr '\t' '\037')
+IFS=$'\037' read -r cwd model used session_id <<EOF
 $pr_payload_tsv
 EOF
 [ -z "$cwd" ] && cwd=$(pwd)
@@ -292,8 +292,8 @@ if [ "${CLAUDE_STATUSLINE_PR:-1}" != "0" ] && command -v gh >/dev/null 2>&1 && c
       if [ -f "$pr_hint_cache" ]; then
         pr_hint_fields=$(jq -r '
           [(.pr.headRefName // ""), (.pr.headRefOid // ""), (.pr.state // ""), (.fetchedAt // 0 | tostring)] | @tsv
-        ' "$pr_hint_cache" 2>/dev/null)
-        IFS=$'\t' read -r pr_hint_head_ref pr_hint_head_oid pr_hint_state pr_hint_fetched_at <<EOF
+        ' "$pr_hint_cache" 2>/dev/null | tr '\t' '\037')
+        IFS=$'\037' read -r pr_hint_head_ref pr_hint_head_oid pr_hint_state pr_hint_fetched_at <<EOF
 $pr_hint_fields
 EOF
       fi
@@ -389,8 +389,8 @@ EOF
         pr_precheck_fields=$(jq -r '
           [(.error // ""), (.failures // 0 | tostring), (.none // false | tostring),
            (.pr.state // ""), (.pr.pending // 0 | tostring)] | @tsv
-        ' "$pr_cache" 2>/dev/null)
-        IFS=$'\t' read -r pc_error pc_failures pc_none pc_state pc_pending <<EOF
+        ' "$pr_cache" 2>/dev/null | tr '\t' '\037')
+        IFS=$'\037' read -r pc_error pc_failures pc_none pc_state pc_pending <<EOF
 $pr_precheck_fields
 EOF
         if [ -n "$pc_error" ]; then

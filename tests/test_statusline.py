@@ -62,6 +62,7 @@ class StatuslineTests(unittest.TestCase):
             self.assertIn("✓3", text)
             self.assertIn("✗1", text)
             self.assertIn("…2", text)
+            self.assertNotIn("ctx 0%", text)
             self.assertFalse((home / "network-called").exists())
 
     def test_pin_hook_writes_synthetic_pr(self):
